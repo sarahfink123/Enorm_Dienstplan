@@ -1,3 +1,4 @@
+#IMPORTS
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,24 +6,33 @@ from ortools.sat.python import cp_model
 import io
 from datetime import datetime
 
-#Title
+
+#TITLE
 '''
 # Dienstplan erstellen
 '''
-#INPUT
+
+#USER INPUT
 c1 = st.columns(2)
 month = c1[0].selectbox('Monat', [1,2,3,4,5,6,7,8,9,10,11,12], index=datetime.now().month)
 year = c1[1].number_input('Jahr', 2010, 2040, datetime.now().year)
 #Upload file
-input_df = st.file_uploader('Lade Mitarbeitenden Informationen hoch:', ['XLS', 'XLSX','csv'], help='Only accepts XLS, XLSX and csv files.')
+input_df = st.file_uploader('Lade Mitarbeitenden Informationen hoch:', ['XLS', 'XLSX','csv'], help='Es werden nur Dateitypen XLS, XLSX and csv akzeptiert.')
 st.caption('Die Mitarbeitendeninformationen sollten eine Spalte haben mit "Mitarbeitenden_ID". Darauf basierend werden die Mitarbeitenden in den Dienstplan eingesteilt.')
 
-    #CREATE SCHEDULE
+#CREATE SCHEDULE
 if input_df is not None:
     with st.spinner('Dienstplan wird erstellt...'):
-        mitarbeitende_df = pd.read_csv(input_df)
+        #Load Data from user input CODE
+        if input_df.name.endswith('.csv'):
+            mitarbeitende_df = pd.read_csv(input_df)
+        elif input_df.name.endswith('.xls') or input_df.name.endswith('.xlsx'):
+            mitarbeitende_df = pd.read_excel(input_df)
+        else:
+            st.error('Unsupported file type. Please upload a CSV, XLS, or XLSX file.')
+            st.stop()
 
-        #Create the number of days per month
+        #Operation CODE
         if month in [1, 3, 5, 7, 8, 10, 12]:
             num_days = 31
         elif month in [4, 6, 9, 11]:
@@ -116,11 +126,13 @@ if input_df is not None:
                                     # Get the shift type and corresponding time range
                                     shift_type = list(shift_types.keys())[y]
                                     shift_time = shift_types[shift_type]
-                                    self._results.append((dates[x], shift_type, shift_time, mitarbeitende_df['Mitarbeitenden_ID'][z]))  # Add 1 to worker ID
+                                    formatted_date = dates[x].strftime('%Y-%m-%d')
+                                    self._results.append((dates[x], shift_type, shift_time, mitarbeitende_df['Mitarbeitenden_ID'].iloc[z]))
                 self._solution_count += 1
 
             def get_dataframe(self):
                 return pd.DataFrame(self._results, columns=['Datum', 'Schicht', 'Schichtzeit', 'Dienst'])
+
 
         # Solve the model
         solver = cp_model.CpSolver()
@@ -131,25 +143,38 @@ if input_df is not None:
 
         # Get and display the results as a DataFrame
         df = solution_printer.get_dataframe()
-        xlsx = df.to_excel('Dienstplan.xlsx', index=False)
 
         #OUTPUT
+        df['Datum'] = pd.to_datetime(df['Datum']).dt.date  # Convert to date only
+        weekday_map = {
+                    0: 'Mo',
+                    1: 'Di',
+                    2: 'Mi',
+                    3: 'Do',
+                    4: 'Fr',
+                    5: 'Sa',
+                    6: 'So'
+                }
+        df['Wochentag'] = pd.to_datetime(df['Datum']).dt.weekday.map(weekday_map) # Add weekday
+        df = df[['Wochentag', 'Datum', 'Schicht', 'Schichtzeit', 'Dienst']] #Reorder columns
 
         # Save the DataFrame to an Excel file in memory
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False)
+            df.to_excel(writer, index=False, sheet_name='Dienstplan')
+            #Style excel sheet
+            workbook = writer.book
+            worksheet = writer.sheets['Dienstplan']
+            yellow_format = workbook.add_format({'bg_color': '#FFFF00'})
+            for idx, weekday, in enumerate(df['Wochentag']):
+                if weekday in ['Sa', 'So']:
+                    worksheet.set_row(idx +1, cell_format=yellow_format)
         buffer.seek(0)
 
-        # st.download_button(
-        #     label='Download Dienstplan',
-        #     data=xlsx,
-        #     file_name='Dienstplan.xlsx'
-        #     )
-
+        #Download button
         st.download_button(
             label='Download Dienstplan',
             data=buffer,
-            file_name='Dienstplan.xlsx',
+            file_name=f'Dienstplan_{year}_{month}.xlsx',
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
